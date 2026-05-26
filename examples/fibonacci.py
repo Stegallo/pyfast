@@ -30,7 +30,7 @@ def main() -> None:
     # Ripetiamo molte volte con n<=90 per restare in i64 e avere un benchmark significativo
     runs: int = 1000000
     n: int = 90
-    i = 0
+    i: int = 0
     result: int = 0
 
     while i < runs:
