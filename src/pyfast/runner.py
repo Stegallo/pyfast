@@ -190,6 +190,10 @@ def execute(script_path: str, argv: list[str] | None = None) -> int:
         compile_thread.join(timeout=COMPILE_TIMEOUT)
         if compile_thread.is_alive():
             _warn_compile_timeout(COMPILE_TIMEOUT)
+        else:
+            # Il thread è finito: se ha scritto un errore, avvisiamo subito
+            # (stesso run — non serve aspettare la prossima esecuzione).
+            _warn_if_compile_error(source_hash, script_path)
 
     return exit_code
 
