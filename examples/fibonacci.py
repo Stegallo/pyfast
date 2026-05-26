@@ -1,10 +1,10 @@
-"""Milestone 1+2 — Fibonacci iterativo.
+"""Fibonacci iterativo — esempio Milestone 1+2.
 
-Dimostra:
-  - Funzioni con parametri e valore di ritorno
-  - While loop con contatore
-  - Variabili mutabili e immutabili
-  - Aritmetica intera
+Nota: il subset PyFast usa i64 (max ~9.2e18).
+      fibonacci(n) overflowa i64 per n > 92.
+      Benchmark corretto: ripetere molte volte con n <= 90.
+
+Per il benchmark Python vs Rust usa invece: pyfast bench examples/primes.py
 """
 
 
@@ -27,12 +27,17 @@ def fibonacci(n: int) -> int:
 
 
 def main() -> None:
-    limite: int = 10
+    # Ripetiamo molte volte con n<=90 per restare in i64 e avere un benchmark significativo
+    runs: int = 1000000
+    n: int = 90
     i: int = 0
-    while i <= limite:
-        result: int = fibonacci(i)
-        print(result)
+    result: int = 0
+
+    while i < runs:
+        result = fibonacci(n)
         i = i + 1
+
+    print(result)
 
 
 main()

@@ -54,6 +54,21 @@ def _cmd_transpile(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_bench(args: argparse.Namespace) -> int:
+    """Benchmark: misura speedup Python vs Rust."""
+    from pyfast.bench import run_benchmark
+
+    try:
+        run_benchmark(args.script, runs=args.runs, warmup=args.warmup)
+    except FileNotFoundError as e:
+        print(f"pyfast: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"pyfast: errore benchmark: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _cmd_cache(args: argparse.Namespace) -> int:
     """Gestione della cache."""
     from pyfast import cache as cache_mod
@@ -122,6 +137,22 @@ def _build_parser() -> argparse.ArgumentParser:
     cache_group.add_argument("--list", action="store_true", help="Elenca entry in cache")
     cache_group.add_argument("--clear", action="store_true", help="Svuota la cache")
     cache_p.set_defaults(func=_cmd_cache)
+
+    # ── bench ────────────────────────────────────────────────────────────────
+    bench_p = subparsers.add_parser(
+        "bench",
+        help="Misura speedup Python vs Rust (richiede rustc)",
+    )
+    bench_p.add_argument("script", metavar="script.py", help="File Python da benchmarkare")
+    bench_p.add_argument(
+        "--runs", type=int, default=5, metavar="N",
+        help="Numero di esecuzioni per misurare i tempi (default: 5)",
+    )
+    bench_p.add_argument(
+        "--warmup", type=int, default=1, metavar="N",
+        help="Esecuzioni di riscaldamento, non conteggiate (default: 1)",
+    )
+    bench_p.set_defaults(func=_cmd_bench)
 
     return parser
 

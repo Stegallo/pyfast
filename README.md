@@ -19,6 +19,11 @@ Esecuzioni successive:
 ## Installazione
 
 ```bash
+# 1. Installa Rust (necessario per compilare i binari)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# 2. Installa PyFast
 pip install -e ".[dev]"
 ```
 
@@ -31,13 +36,68 @@ pyfast run examples/hello_world.py
 # Solo transpila (non esegue)
 pyfast transpile examples/hello_world.py
 
-# Mostra il codice Rust generato
-pyfast transpile --show examples/hello_world.py
+# Salva il Rust in un file
+pyfast transpile examples/primes.py -o primes.rs
+
+# Benchmark Python vs Rust
+pyfast bench examples/primes.py
+pyfast bench examples/fibonacci.py --runs 5 --warmup 2
 
 # Stato della cache
 pyfast cache --list
 pyfast cache --clear
 ```
+
+## Benchmark
+
+`pyfast bench` misura lo speedup reale Python → Rust:
+
+```
+──────────────────────────────────────────────────
+  Python (5 runs, 1 warmup)
+──────────────────────────────────────────────────
+  Run 1/5: 2321.4 ms
+  ...
+  → Media: 2338.2 ms  (best: 2318.7 ms)
+
+──────────────────────────────────────────────────
+  Compilazione Rust
+──────────────────────────────────────────────────
+  Compilo in corso... OK (1.8s)
+
+──────────────────────────────────────────────────
+  Rust (5 runs, 1 warmup)
+──────────────────────────────────────────────────
+  Run 1/5: 48.3 ms
+  ...
+  → Media: 49.1 ms  (best: 48.3 ms)
+
+══════════════════════════════════════════════════
+  RIEPILOGO BENCHMARK
+══════════════════════════════════════════════════
+  Script:  examples/primes.py
+  Python:  2338.2 ms (media)
+  Compil:  1.8 s (una-tantum, non conteggiata)
+  Rust:    49.1 ms (media)
+  Speedup: 47.6x  🚀
+  Break-even: ~1 esecuzione
+══════════════════════════════════════════════════
+```
+
+> **Nota**: la prima esecuzione paga la compilazione Rust (1-3 sec).
+> Dalla seconda in poi: solo il binario nativo, nessun overhead.
+
+### Esempi benchmark inclusi
+
+| Script | Algoritmo | Python (atteso) | Rust (atteso) | Speedup |
+|--------|-----------|-----------------|---------------|---------|
+| `primes.py` | Crivello n=1M | ~2.3s | ~50ms | ~47x |
+| `fibonacci.py` | Fib(90) × 1M iter | ~1.6s | ~30ms | ~50x |
+
+### Perché Fibonacci non usa n>92?
+
+Il subset PyFast mappa `int` → `i64` (max ≈ 9.2×10¹⁸).
+`fibonacci(93)` overflowa `i64`. Per big integers servirebbero librerie esterne — escluse dal subset.
 
 ## Subset Python supportato
 
