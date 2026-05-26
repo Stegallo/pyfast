@@ -167,11 +167,25 @@ def execute(script_path: str, argv: list[str] | None = None) -> int:
 
     # ── Cache MISS ─────────────────────────────────────────────────────────
     # 1. Avvia compilazione in background (solo se non avevamo già un errore)
+    compile_thread = None
     if not cache_mod.get_compile_error(source_hash):
-        _start_background_compile(source, source_hash)
+        compile_thread = _start_background_compile(source, source_hash)
 
     # 2. Esegui con Python immediatamente (zero attesa per l'utente)
     exit_code = run_python(script_path, argv)
+
+    # 3. Attendi che il thread di compilazione finisca.
+    #
+    #    Perché non daemon=True?
+    #    Con daemon=True il thread viene ucciso quando il processo esce
+    #    (subito dopo run_python). Se Python < rustc, compile.error non
+    #    viene mai scritto e il warning non compare mai.
+    #
+    #    Con daemon=False il processo aspetta il thread dopo che l'output
+    #    Python è già apparso — l'utente vede il risultato subito,
+    #    il prompt torna quando la compilazione finisce (o scade il timeout).
+    if compile_thread is not None:
+        compile_thread.join(timeout=120)  # max 2 min; rustc piccoli: ~2-5s
 
     return exit_code
 
@@ -230,6 +244,6 @@ def _start_background_compile(source: str, source_hash: str) -> threading.Thread
 
         compile_rust(rust_source, source_hash)
 
-    thread = threading.Thread(target=_compile, daemon=True)
+    thread = threading.Thread(target=_compile, daemon=False)
     thread.start()
     return thread
