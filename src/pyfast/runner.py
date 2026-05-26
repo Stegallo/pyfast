@@ -27,6 +27,10 @@ from pyfast import cache as cache_mod
 from pyfast.transpiler.analyzer import analyze
 from pyfast.transpiler.generator import RustGenerator, TranspileError
 
+# Secondi di attesa per la compilazione Rust dopo che Python ha finito.
+# Sovrascrivibile via variabile d'ambiente PYFAST_COMPILE_TIMEOUT.
+COMPILE_TIMEOUT: int = int(os.environ.get("PYFAST_COMPILE_TIMEOUT", "10"))
+
 
 # ---------------------------------------------------------------------------
 # Transpilazione (Python AST → Rust source)
@@ -174,18 +178,18 @@ def execute(script_path: str, argv: list[str] | None = None) -> int:
     # 2. Esegui con Python immediatamente (zero attesa per l'utente)
     exit_code = run_python(script_path, argv)
 
-    # 3. Attendi che il thread di compilazione finisca.
+    # 3. Attendi la compilazione fino al timeout.
     #
-    #    Perché non daemon=True?
-    #    Con daemon=True il thread viene ucciso quando il processo esce
-    #    (subito dopo run_python). Se Python < rustc, compile.error non
-    #    viene mai scritto e il warning non compare mai.
-    #
-    #    Con daemon=False il processo aspetta il thread dopo che l'output
-    #    Python è già apparso — l'utente vede il risultato subito,
-    #    il prompt torna quando la compilazione finisce (o scade il timeout).
+    #    Trade-off:
+    #    - daemon=True + join(timeout): se rustc finisce entro il timeout →
+    #      compile.error scritto correttamente. Se supera il timeout →
+    #      thread ucciso, errore non salvato, warning di timeout mostrato.
+    #    - Il timeout è configurabile via PYFAST_COMPILE_TIMEOUT (default 10s).
+    #      Per script piccoli rustc impiega 2-5s, quindi 10s è sufficiente.
     if compile_thread is not None:
-        compile_thread.join(timeout=120)  # max 2 min; rustc piccoli: ~2-5s
+        compile_thread.join(timeout=COMPILE_TIMEOUT)
+        if compile_thread.is_alive():
+            _warn_compile_timeout(COMPILE_TIMEOUT)
 
     return exit_code
 
@@ -218,6 +222,16 @@ def _warn_if_compile_error(source_hash: str, script_path: str) -> None:
     print(file=sys.stderr)
 
 
+def _warn_compile_timeout(timeout: int) -> None:
+    """Warning quando il timeout di compilazione scade e il thread è ancora vivo."""
+    print(file=sys.stderr)
+    print(f"⚠️  [pyfast] La compilazione Rust non ha finito entro {timeout}s.", file=sys.stderr)
+    print("   Il thread è stato interrotto: l'esito non verrà salvato.", file=sys.stderr)
+    print(f"   Se hai una macchina lenta, aumenta il timeout:", file=sys.stderr)
+    print(f"   PYFAST_COMPILE_TIMEOUT=60 pyfast run <script>", file=sys.stderr)
+    print(file=sys.stderr)
+
+
 def _start_background_compile(source: str, source_hash: str) -> threading.Thread:
     """Avvia la transpilazione e compilazione Rust in background."""
     def _compile():
@@ -244,6 +258,6 @@ def _start_background_compile(source: str, source_hash: str) -> threading.Thread
 
         compile_rust(rust_source, source_hash)
 
-    thread = threading.Thread(target=_compile, daemon=False)
+    thread = threading.Thread(target=_compile, daemon=True)
     thread.start()
     return thread
