@@ -60,8 +60,10 @@ class RustGenerator(ast.NodeVisitor):
         self._analysis = analysis
         self._indent_level = 0
         self._lines: list[str] = []
-        # Scope stack per l'analisi locale della mutabilità per funzione
-        # (per ora usiamo l'analisi globale — verrà raffinata per scope annidati)
+        # Variabili dichiarate nello scope corrente (via AnnAssign, parametri, for).
+        # Usato da visit_Assign per distinguere prima dichiarazione (errore: manca
+        # type hint) da riassegnazione legittima.
+        self._declared_vars: set[str] = set()
 
     # ------------------------------------------------------------------
     # Entry point
@@ -131,11 +133,18 @@ class RustGenerator(ast.NodeVisitor):
 
         self._emit(f"fn {node.name}({', '.join(params)}){ret} {{")
         self._indent()
+
+        # Nuovo scope: i parametri sono già dichiarati, le variabili locali no
+        outer_declared = self._declared_vars
+        self._declared_vars = {arg.arg for arg in node.args.args}
+
         for stmt in node.body:
             # Salta docstring di funzione (primo stmt se è Constant str)
             if _is_docstring(stmt):
                 continue
             self.visit(stmt)
+
+        self._declared_vars = outer_declared  # ripristina scope esterno
         self._dedent()
         self._emit("}")
         self._emit()
@@ -149,6 +158,7 @@ class RustGenerator(ast.NodeVisitor):
         if not isinstance(node.target, ast.Name):
             return
         name = node.target.id
+        self._declared_vars.add(name)  # registra nel scope corrente
         mut = "mut " if name in self._analysis.mutable_vars else ""
         is_owned = name in self._analysis.owned_strings
         rust_type = self._get_type(node.annotation, var_name=name, owned_str=is_owned)
@@ -160,11 +170,24 @@ class RustGenerator(ast.NodeVisitor):
             self._emit(f"let {mut}{name}: {rust_type};")
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        """Riassegnazione senza annotation: `x = expr`"""
+        """Riassegnazione senza annotation: `x = expr`
+
+        Se la variabile non è ancora dichiarata nello scope corrente,
+        significa che manca il type hint sulla prima assegnazione → errore.
+        """
         for target in node.targets:
-            if isinstance(target, ast.Name):
-                value = self._expr(node.value)
-                self._emit(f"{target.id} = {value};")
+            if not isinstance(target, ast.Name):
+                continue
+            name = target.id
+            if name not in self._declared_vars:
+                raise TranspileError(
+                    f"variabile '{name}' usata senza type hint — "
+                    f"aggiungi `{name}: <tipo> = ...`",
+                    lineno=node.lineno,
+                    col=node.col_offset,
+                )
+            value = self._expr(node.value)
+            self._emit(f"{name} = {value};")
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         """`x += 1` → `x += 1;`"""
@@ -237,6 +260,7 @@ class RustGenerator(ast.NodeVisitor):
             return
 
         var = node.target.id
+        self._declared_vars.add(var)  # la var di loop è dichiarata dal for stesso
 
         # Caso speciale: `for i in range(n)` → `for i in 0..n`
         if _is_range_call(node.iter):

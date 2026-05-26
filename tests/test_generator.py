@@ -75,6 +75,28 @@ class TestVariables:
         assert "let s: String" in rust
         assert "format!" in rust
 
+    def test_local_var_without_type_hint_raises(self):
+        """Variabile locale senza type hint → TranspileError con numero di riga."""
+        from pyfast.transpiler.generator import TranspileError
+        with pytest.raises(TranspileError) as exc_info:
+            transpile(textwrap.dedent("""
+                def main() -> None:
+                    x = 42
+            """))
+        err = exc_info.value
+        assert "x" in str(err)
+        assert err.lineno is not None
+
+    def test_reassignment_after_ann_assign_ok(self):
+        """Riassegnazione di una variabile già dichiarata con type hint → ok."""
+        rust = transpile(textwrap.dedent("""
+            def main() -> None:
+                x: int = 0
+                x = 1
+        """))
+        assert "let mut x: i64 = 0;" in rust
+        assert "x = 1;" in rust
+
 
 # ---------------------------------------------------------------------------
 # F-string e print
@@ -189,7 +211,7 @@ class TestControlFlow:
         """Se la collezione è usata dopo il loop → &lista"""
         rust = transpile("""
 def foo() -> None:
-    numeri = [1, 2, 3]
+    numeri: list[int] = [1, 2, 3]
     for n in numeri:
         print(n)
     print(numeri)
