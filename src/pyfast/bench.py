@@ -281,13 +281,5 @@ def _print_summary(result: BenchmarkResult) -> None:
 # ---------------------------------------------------------------------------
 
 def _rustc_available() -> bool:
-    """True se rustc è disponibile nel PATH."""
-    try:
-        result = subprocess.run(
-            ["rustc", "--version"],
-            capture_output=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    from pyfast.runner import rustc_available
+    return rustc_available()

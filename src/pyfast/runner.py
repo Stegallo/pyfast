@@ -132,23 +132,38 @@ def run_binary(source_hash: str, argv: list[str] | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Controllo disponibilità rustc
+# ---------------------------------------------------------------------------
+
+def rustc_available() -> bool:
+    """True se rustc è disponibile nel PATH."""
+    try:
+        result = subprocess.run(
+            ["rustc", "--version"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Entry point principale
 # ---------------------------------------------------------------------------
 
 def execute(script_path: str, argv: list[str] | None = None) -> int:
     """Esegui uno script Python con la strategia PyFast.
 
-    Algoritmo:
-      1. Leggi sorgente e calcola hash
-      2. Cache HIT → esegui binario Rust (os.execv, no return)
-      3. Cache MISS → esegui Python subito + transpila+compila in background
-
-    Args:
-        script_path: Percorso al file Python da eseguire.
-        argv: Argomenti da passare allo script (esclude script_path stesso).
-
-    Returns:
-        Exit code (solo nel caso Python — il caso Rust usa execv).
+    Flusso:
+      1. Cache HIT  → esegui binario Rust (os.execv, no return)
+      2. Cache MISS →
+           a. Avvisa se c'è un errore dalla run precedente
+           b. Transpila subito (sync, < 100ms) → intercetta errori di subset
+           c. Verifica rustc disponibile → intercetta tool mancante
+           d. Avvia rustc in background
+           e. Esegui Python immediatamente
+           f. join(timeout) → avvisa se errore rustc o timeout
     """
     source_path = Path(script_path)
     if not source_path.exists():
@@ -161,39 +176,41 @@ def execute(script_path: str, argv: list[str] | None = None) -> int:
     # ── Cache HIT ──────────────────────────────────────────────────────────
     if cache_mod.is_cached(source_hash):
         run_binary(source_hash, argv)
-        # se arriviamo qui, execv ha fallito
-        return 1
+        return 1  # execv ha fallito
 
-    # ── Errore compilazione precedente ─────────────────────────────────────
-    # Se per questo hash esiste un errore registrato dalla run precedente,
-    # avvisiamo l'utente PRIMA di eseguire (su stderr, non misto all'output).
+    # ── Errore dalla run precedente ────────────────────────────────────────
     _warn_if_compile_error(source_hash, script_path)
+    if cache_mod.get_compile_error(source_hash):
+        # Errore già noto: esegui Python e basta, non ritentare
+        return run_python(script_path, argv)
 
-    # ── Cache MISS ─────────────────────────────────────────────────────────
-    # 1. Avvia compilazione in background (solo se non avevamo già un errore)
-    compile_thread = None
-    if not cache_mod.get_compile_error(source_hash):
-        compile_thread = _start_background_compile(source, source_hash)
+    # ── Transpilazione (sincrona, < 100ms) ────────────────────────────────
+    # Eseguita prima di run_python() per intercettare errori di subset subito,
+    # prima che l'output dello script li "nasconda" visivamente.
+    rust_source = _transpile_or_warn(source, source_hash, script_path)
+    if rust_source is None:
+        # Transpilazione fallita: errore già salvato e mostrato
+        return run_python(script_path, argv)
 
-    # 2. Esegui con Python immediatamente (zero attesa per l'utente)
+    # ── Verifica rustc ─────────────────────────────────────────────────────
+    if not rustc_available():
+        msg = "rustc non trovato — installa Rust: https://rustup.rs"
+        cache_mod.store_compile_error(source_hash, cache_mod.ERROR_RUSTC_NOT_FOUND, msg)
+        _warn_if_compile_error(source_hash, script_path)
+        return run_python(script_path, argv)
+
+    # ── Avvia rustc in background ──────────────────────────────────────────
+    compile_thread = _start_background_rustc(rust_source, source_hash)
+
+    # ── Esegui Python immediatamente ───────────────────────────────────────
     exit_code = run_python(script_path, argv)
 
-    # 3. Attendi la compilazione fino al timeout.
-    #
-    #    Trade-off:
-    #    - daemon=True + join(timeout): se rustc finisce entro il timeout →
-    #      compile.error scritto correttamente. Se supera il timeout →
-    #      thread ucciso, errore non salvato, warning di timeout mostrato.
-    #    - Il timeout è configurabile via PYFAST_COMPILE_TIMEOUT (default 10s).
-    #      Per script piccoli rustc impiega 2-5s, quindi 10s è sufficiente.
-    if compile_thread is not None:
-        compile_thread.join(timeout=COMPILE_TIMEOUT)
-        if compile_thread.is_alive():
-            _warn_compile_timeout(COMPILE_TIMEOUT)
-        else:
-            # Il thread è finito: se ha scritto un errore, avvisiamo subito
-            # (stesso run — non serve aspettare la prossima esecuzione).
-            _warn_if_compile_error(source_hash, script_path)
+    # ── Attendi rustc fino al timeout ──────────────────────────────────────
+    compile_thread.join(timeout=COMPILE_TIMEOUT)
+    if compile_thread.is_alive():
+        _warn_compile_timeout(COMPILE_TIMEOUT)
+    else:
+        _warn_if_compile_error(source_hash, script_path)
 
     return exit_code
 
@@ -236,32 +253,34 @@ def _warn_compile_timeout(timeout: int) -> None:
     print(file=sys.stderr)
 
 
-def _start_background_compile(source: str, source_hash: str) -> threading.Thread:
-    """Avvia la transpilazione e compilazione Rust in background."""
-    def _compile():
-        try:
-            rust_source = transpile(source)
-        except (TranspileError, SyntaxError) as e:
-            cache_mod.store_compile_error(
-                source_hash,
-                cache_mod.ERROR_TRANSPILE,
-                str(e),
-            )
-            if os.environ.get("PYFAST_DEBUG"):
-                print(f"[pyfast] Transpilazione fallita: {e}", file=sys.stderr)
-            return
-        except Exception as e:
-            cache_mod.store_compile_error(
-                source_hash,
-                cache_mod.ERROR_TRANSPILE,
-                f"Errore inaspettato: {e}",
-            )
-            if os.environ.get("PYFAST_DEBUG"):
-                print(f"[pyfast] Errore inaspettato nella transpilazione: {e}", file=sys.stderr)
-            return
+def _transpile_or_warn(
+    source: str, source_hash: str, script_path: str
+) -> str | None:
+    """Transpila il sorgente Python in Rust (sincrono).
 
-        compile_rust(rust_source, source_hash)
+    Se la transpilazione fallisce, salva l'errore in cache e mostra il warning.
 
-    thread = threading.Thread(target=_compile, daemon=True)
+    Returns:
+        Il sorgente Rust come stringa, oppure None se la transpilazione è fallita.
+    """
+    try:
+        return transpile(source)
+    except (TranspileError, SyntaxError) as e:
+        cache_mod.store_compile_error(source_hash, cache_mod.ERROR_TRANSPILE, str(e))
+    except Exception as e:
+        cache_mod.store_compile_error(
+            source_hash, cache_mod.ERROR_TRANSPILE, f"Errore inaspettato: {e}"
+        )
+    _warn_if_compile_error(source_hash, script_path)
+    return None
+
+
+def _start_background_rustc(rust_source: str, source_hash: str) -> threading.Thread:
+    """Avvia la compilazione rustc in background (la transpilazione è già avvenuta)."""
+    thread = threading.Thread(
+        target=compile_rust,
+        args=(rust_source, source_hash),
+        daemon=True,
+    )
     thread.start()
     return thread
