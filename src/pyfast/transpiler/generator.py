@@ -114,8 +114,10 @@ class RustGenerator(ast.NodeVisitor):
         for arg in node.args.args:
             if arg.annotation is None:
                 raise TranspileError(
-                    f"Parametro '{arg.arg}' nella funzione '{node.name}' "
-                    f"manca di type hint — richiesto nel subset PyFast"
+                    f"parametro '{arg.arg}' nella funzione '{node.name}' "
+                    f"manca di type hint",
+                    lineno=arg.lineno,
+                    col=arg.col_offset,
                 )
             rust_type = self._get_type(arg.annotation, var_name=arg.arg)
             params.append(f"{arg.arg}: {rust_type}")
@@ -433,7 +435,17 @@ class RustGenerator(ast.NodeVisitor):
 # ---------------------------------------------------------------------------
 
 class TranspileError(Exception):
-    """Errore durante la transpilazione."""
+    """Errore durante la transpilazione.
+
+    Attributes:
+        lineno: Numero di riga nel sorgente Python (None se non disponibile).
+        col:    Colonna nel sorgente Python (None se non disponibile).
+    """
+
+    def __init__(self, message: str, lineno: int | None = None, col: int | None = None):
+        super().__init__(message)
+        self.lineno = lineno
+        self.col = col
 
 
 # ---------------------------------------------------------------------------

@@ -231,8 +231,8 @@ def _warn_if_compile_error(source_hash: str, script_path: str) -> None:
         print(f"   {message}", file=sys.stderr)
 
     elif kind == cache_mod.ERROR_TRANSPILE:
-        print("   Il codice Python contiene costrutti fuori dal subset supportato.", file=sys.stderr)
-        print(f"   Dettaglio: {message}", file=sys.stderr)
+        for line in message.splitlines():
+            print(f"   {line}", file=sys.stderr)
 
     elif kind == cache_mod.ERROR_RUSTC:
         print("   Il codice Rust generato non compila.", file=sys.stderr)
@@ -265,11 +265,20 @@ def _transpile_or_warn(
     """
     try:
         return transpile(source)
-    except (TranspileError, SyntaxError) as e:
-        cache_mod.store_compile_error(source_hash, cache_mod.ERROR_TRANSPILE, str(e))
+    except TranspileError as e:
+        loc = f"riga {e.lineno}" if e.lineno is not None else "posizione sconosciuta"
+        msg = f"{loc}: {e}"
+        cache_mod.store_compile_error(source_hash, cache_mod.ERROR_TRANSPILE, msg)
+    except SyntaxError as e:
+        msg = f"riga {e.lineno}: {e.msg}"
+        if e.text:
+            msg += f"\n      {e.text.rstrip()}"
+            if e.offset:
+                msg += f"\n      {' ' * (e.offset - 1)}^"
+        cache_mod.store_compile_error(source_hash, cache_mod.ERROR_TRANSPILE, msg)
     except Exception as e:
         cache_mod.store_compile_error(
-            source_hash, cache_mod.ERROR_TRANSPILE, f"Errore inaspettato: {e}"
+            source_hash, cache_mod.ERROR_TRANSPILE, f"errore inaspettato: {e}"
         )
     _warn_if_compile_error(source_hash, script_path)
     return None
