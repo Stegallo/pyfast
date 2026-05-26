@@ -103,7 +103,8 @@ Se dimentichi un type hint, PyFast ti mostra subito dove:
 | `str`                | `nome: str = "Alice"`                      | Stringa                                       |
 | `list[T]`            | `numeri: list[int] = [1, 2, 3]`           | Lista omogenea (tutti gli elementi stesso tipo)|
 | `dict[K, V]`         | `d: dict[str, int] = {}`                  | Dizionario chiave→valore                      |
-| `Optional[T]`        | `x: Optional[int] = None`                 | Valore che può essere `None`                  |
+| `int \| None`        | `x: int \| None = None`                   | Valore che può essere `None` (Python 3.10+)   |
+| `Optional[T]`        | `x: Optional[int] = None`                 | Equivalente al precedente (stile pre-3.10)    |
 
 ```python
 from typing import Optional

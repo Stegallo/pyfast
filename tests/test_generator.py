@@ -260,3 +260,45 @@ class TestTypeMapper:
         """)
         assert "use std::collections::HashMap;" in rust
         assert "HashMap<&str, i64>" in rust
+
+    def test_union_pipe_none_param(self):
+        """int | None come parametro → Option<i64>  (sintassi Python 3.10+)"""
+        rust = transpile("""
+            def foo(x: int | None) -> None:
+                pass
+        """)
+        assert "Option<i64>" in rust
+
+    def test_union_none_pipe_param(self):
+        """None | int → Option<i64>  (ordine inverso)"""
+        rust = transpile("""
+            def foo(x: None | int) -> None:
+                pass
+        """)
+        assert "Option<i64>" in rust
+
+    def test_union_pipe_none_variable(self):
+        """int | None come tipo di variabile locale."""
+        rust = transpile("""
+            def foo() -> None:
+                x: int | None = None
+        """)
+        assert "Option<i64>" in rust
+
+    def test_union_pipe_none_return(self):
+        """int | None come tipo di ritorno."""
+        rust = transpile("""
+            def foo(n: int) -> int | None:
+                if n > 0:
+                    return n
+                return None
+        """)
+        assert "-> Option<i64>" in rust
+
+    def test_union_pipe_str_none(self):
+        """str | None → Option<&str>"""
+        rust = transpile("""
+            def foo(s: str | None) -> None:
+                pass
+        """)
+        assert "Option<&str>" in rust

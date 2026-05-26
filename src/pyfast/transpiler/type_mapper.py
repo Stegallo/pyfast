@@ -31,6 +31,18 @@ def annotation_to_rust(node: ast.expr, owned_str: bool = False) -> str:
         owned_str: Se True, le stringhe `str` vengono mappate a `String`
                    invece di `&str` (usato per variabili costruite a runtime).
     """
+    # Sintassi union Python 3.10+: `T | None` e `None | T` → Option<T>
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        left, right = node.left, node.right
+        if _is_none_node(right):
+            inner = annotation_to_rust(left, owned_str=owned_str)
+            return f"Option<{inner}>"
+        if _is_none_node(left):
+            inner = annotation_to_rust(right, owned_str=owned_str)
+            return f"Option<{inner}>"
+        # Union di due tipi non-None — non supportato
+        return f"/* unsupported union type: {ast.unparse(node)} */"
+
     if isinstance(node, ast.Name):
         name = node.id
         if name == "str":
@@ -81,6 +93,15 @@ def annotation_to_rust(node: ast.expr, owned_str: bool = False) -> str:
 
     # fallback
     return f"/* unsupported type: {ast.unparse(node)} */"
+
+
+def _is_none_node(node: ast.expr) -> bool:
+    """True se il nodo rappresenta None come annotazione di tipo."""
+    if isinstance(node, ast.Constant) and node.value is None:
+        return True
+    if isinstance(node, ast.Name) and node.id == "None":
+        return True
+    return False
 
 
 def _get_name(node: ast.expr) -> str:

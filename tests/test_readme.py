@@ -76,6 +76,14 @@ class TestReadmeTypeTable:
         """)
         assert "Option<i64>" in rust, "README: Optional[int] → Option<i64>"
 
+    def test_union_pipe_none_maps_to_option(self):
+        """README: int | None → Option<i64>  (sintassi moderna, alternativa a Optional)"""
+        rust = transpile("""
+            def foo(x: int | None) -> None:
+                pass
+        """)
+        assert "Option<i64>" in rust, "README: int | None → Option<i64>"
+
 
 # ---------------------------------------------------------------------------
 # Messaggi di errore (README § "Messaggi di errore comuni")
